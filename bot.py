@@ -3,6 +3,7 @@ import logging
 import sqlite3
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
+from aiogram.types import BotCommand
 from aiogram.utils.keyboard import ReplyKeyboardBuilder
 
 logging.basicConfig(level=logging.INFO)
@@ -27,6 +28,12 @@ cursor.execute("""
 conn.commit()
 
 user_states = {}
+
+async def setup_commands():
+    await bot.set_my_commands([
+        BotCommand(command='help', description='Помощь'),
+        BotCommand(command='menu', description='Главное меню'),
+    ])
 
 
 def create_keyboard(items, adjust: int = 2):
@@ -245,8 +252,28 @@ async def handle_text(message: types.Message):
         )
 
 
+# Обработчик /menu (Reply-клавиатура)
+@dp.message(Command("menu"))
+async def cmd_menu(message: types.Message):
+    builder = ReplyKeyboardBuilder()
+    builder.button(text="Кнопка 1")
+    builder.button(text="Кнопка 2")
+    builder.button(text="Геолокация", request_location=True)
+    builder.adjust(2)
+    await message.answer("Выберите действие:", reply_markup=builder.as_markup(resize_keyboard=True))
+
+
+async def start_bot():
+    await setup_commands()
+
+
 async def main():
+    #await dp.start_polling(bot)
+    dp.startup.register(start_bot)
+
+    #await dp.start_polling(bot, on_startup=set_bot_commands)
     await dp.start_polling(bot)
+
 
 
 if __name__ == "__main__":
