@@ -1,10 +1,12 @@
 import asyncio
 import logging
 import sqlite3
+from random import randint
+
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.types import BotCommand
-from aiogram.utils.keyboard import ReplyKeyboardBuilder
+from aiogram.utils.keyboard import ReplyKeyboardBuilder, InlineKeyboardBuilder
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -28,6 +30,8 @@ cursor.execute("""
 conn.commit()
 
 user_states = {}
+M = []
+
 
 async def setup_commands():
     await bot.set_my_commands([
@@ -38,6 +42,7 @@ async def setup_commands():
         BotCommand(command='/show_lists', description='Показать списки'),
     ])
 
+
 def create_keyboard(items, adjust: int = 2):
     builder = ReplyKeyboardBuilder()
     for item in items:
@@ -45,9 +50,11 @@ def create_keyboard(items, adjust: int = 2):
     builder.adjust(adjust)
     return builder.as_markup(resize_keyboard=True, one_time_keyboard=True)
 
+
 async def get_user_lists(user_id: int):
     cursor.execute("SELECT list_name FROM lists WHERE user_id=?", (user_id,))
     return [row[0] for row in cursor.fetchall()]
+
 
 async def get_list_items(user_id: int, list_name: str):
     cursor.execute(
@@ -56,6 +63,24 @@ async def get_list_items(user_id: int, list_name: str):
     )
     result = cursor.fetchone()
     return result[0].split(',') if result and result[0] else []
+
+
+@dp.message(Command("help"))
+async def cmd_help(message: types.Message):
+    builder = InlineKeyboardBuilder()
+    builder.add(types.InlineKeyboardButton(
+        text="Нажми меня",
+        callback_data="random_value")
+    )
+    await message.answer(
+            "Нажмите на кнопку, чтобы бот отправил число от 1 до 10",
+            reply_markup=builder.as_markup())
+
+
+@dp.callback_query(F.data == "random_value")
+async def send_random_value(callback: types.CallbackQuery):
+    await callback.message.answer(str(randint(1, 10)))
+
 
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
@@ -70,59 +95,25 @@ async def cmd_start(message: types.Message):
     )
     await message.answer(help_text)
 
+
 @dp.message(Command("create_list"))
 async def handle_create_list(message: types.Message):
-    try:
-        _, list_name = message.text.split(maxsplit=1)
-        list_name = list_name.strip()
-    except ValueError:
-        await message.answer("❌ Укажите название списка: /create_list <название>")
-        return
-
     user_id = message.from_user.id
+    await message.answer('Введите название списка')
+    user_states[user_id] = {"action": "create_list"}
 
-    if not list_name.isalnum():
-        await message.answer("❌ Название должно содержать только буквы и цифры")
-        return
-
-    try:
-        cursor.execute(
-            "INSERT INTO lists (user_id, list_name, items) VALUES (?, ?, ?)",
-            (user_id, list_name, "")
-        )
-        conn.commit()
-        await message.answer(f"✅ Список '{list_name}' создан!")
-    except sqlite3.IntegrityError:
-        await message.answer(f"❌ Список '{list_name}' уже существует!")
-    except Exception as e:
-        logger.error(f"Create list error: {e}")
-        await message.answer("⚠️ Ошибка при создании списка")
 
 @dp.message(Command("add_to_list"))
-async def handle_add_to_list(message: types.Message):
-    try:
-        _, list_name, item = message.text.split(maxsplit=2)
-        list_name = list_name.strip()
-        item = item.strip()
-    except ValueError:
-        await message.answer("❌ Формат: /add_to_list <название> <элемент>")
-        return
-
+async def handle_delete_object(message: types.Message):
     user_id = message.from_user.id
+    lists = await get_user_lists(user_id)
 
-    try:
-        items = await get_list_items(user_id, list_name)
-        items.append(item)
+    await message.answer(
+        "Выберите список:",
+        reply_markup=create_keyboard(lists)
+    )
+    user_states[user_id] = {"action": "add_to_list"}
 
-        cursor.execute(
-            "UPDATE lists SET items=? WHERE user_id=? AND list_name=?",
-            (','.join(items), user_id, list_name)
-        )
-        conn.commit()
-        await message.answer(f"✅ Добавлено в '{list_name}': {item}")
-    except Exception as e:
-        logger.error(f"Add to list error: {e}")
-        await message.answer("⚠️ Ошибка при добавлении элемента")
 
 @dp.message(Command("delete_list"))
 async def handle_delete_list(message: types.Message):
@@ -237,6 +228,38 @@ async def handle_text(message: types.Message):
             )
             await message.answer(response, reply_markup=types.ReplyKeyboardRemove())
 
+        elif state["action"] == "create_list":
+            try:
+                cursor.execute(
+                    "INSERT INTO lists (user_id, list_name, items) VALUES (?, ?, ?)",
+                    (user_id, text, "")
+                )
+                conn.commit()
+                await message.answer(f"✅ Список '{text}' создан!")
+            except sqlite3.IntegrityError:
+                await message.answer(f"❌ Список '{text}' уже существует!")
+            except Exception as e:
+                logger.error(f"Create list error: {e}")
+                await message.answer("⚠️ Ошибка при создании списка")
+        elif state["action"] == "add_to_list":
+            user_states[user_id] = {"action": "add", "list_name": text}
+            await message.answer('введите элемент')
+        elif state["action"] == "add":
+            list_name = state["list_name"]
+            try:
+                items = await get_list_items(user_id, list_name)
+                items.append(text)
+
+                cursor.execute(
+                    "UPDATE lists SET items=? WHERE user_id=? AND list_name=?",
+                    (','.join(items), user_id, list_name)
+                )
+                conn.commit()
+                await message.answer(f"✅ Добавлено в '{list_name}': {text}")
+            except Exception as e:
+                logger.error(f"Add to list error: {e}")
+                await message.answer("⚠️ Ошибка при добавлении элемента")
+
     except Exception as e:
         logger.error(f"Text handler error: {e}")
         await message.answer(
@@ -244,24 +267,13 @@ async def handle_text(message: types.Message):
             reply_markup=types.ReplyKeyboardRemove()
         )
 
-# Обработчик /menu (Reply-клавиатура)
-@dp.message(Command("menu"))
-async def cmd_menu(message: types.Message):
-    builder = ReplyKeyboardBuilder()
-    builder.button(text="Кнопка 1")
-    builder.button(text="Кнопка 2")
-    builder.button(text="Геолокация", request_location=True)
-    builder.adjust(2)
-    await message.answer("Выберите действие:", reply_markup=builder.as_markup(resize_keyboard=True))
 
 async def start_bot():
     await setup_commands()
 
-async def main():
-    #await dp.start_polling(bot)
-    dp.startup.register(start_bot)
 
-    #await dp.start_polling(bot, on_startup=set_bot_commands)
+async def main():
+    dp.startup.register(start_bot)
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
