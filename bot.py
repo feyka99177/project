@@ -2,10 +2,11 @@ import asyncio
 import logging
 import sqlite3
 from random import randint
-
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
-from aiogram.types import BotCommand
+from aiogram.filters.callback_data import CallbackData
+from aiogram.types import BotCommand, ReplyKeyboardMarkup, InlineKeyboardButton, KeyboardButton, InlineKeyboardMarkup, \
+    update
 from aiogram.utils.keyboard import ReplyKeyboardBuilder, InlineKeyboardBuilder
 
 logging.basicConfig(level=logging.INFO)
@@ -30,7 +31,11 @@ cursor.execute("""
 conn.commit()
 
 user_states = {}
-M = []
+
+
+class MyCallback(CallbackData, prefix="my"):
+    action: str
+    item_id: str
 
 
 async def setup_commands():
@@ -65,18 +70,6 @@ async def get_list_items(user_id: int, list_name: str):
     return result[0].split(',') if result and result[0] else []
 
 
-@dp.message(Command("help"))
-async def cmd_help(message: types.Message):
-    builder = InlineKeyboardBuilder()
-    builder.add(types.InlineKeyboardButton(
-        text="Нажми меня",
-        callback_data="random_value")
-    )
-    await message.answer(
-            "Нажмите на кнопку, чтобы бот отправил число от 1 до 10",
-            reply_markup=builder.as_markup())
-
-
 @dp.callback_query(F.data == "random_value")
 async def send_random_value(callback: types.CallbackQuery):
     await callback.message.answer(str(randint(1, 10)))
@@ -104,7 +97,7 @@ async def handle_create_list(message: types.Message):
 
 
 @dp.message(Command("add_to_list"))
-async def handle_delete_object(message: types.Message):
+async def handle_delete_object(message: types.Message, callback=None):
     user_id = message.from_user.id
     lists = await get_user_lists(user_id)
 
@@ -113,6 +106,7 @@ async def handle_delete_object(message: types.Message):
         reply_markup=create_keyboard(lists)
     )
     user_states[user_id] = {"action": "add_to_list"}
+    await callback.message.delete()
 
 
 @dp.message(Command("delete_list"))
@@ -130,6 +124,7 @@ async def handle_delete_list(message: types.Message):
     )
     user_states[user_id] = {"action": "delete_list"}
 
+
 @dp.message(Command("delete_object"))
 async def handle_delete_object(message: types.Message):
     user_id = message.from_user.id
@@ -145,20 +140,66 @@ async def handle_delete_object(message: types.Message):
     )
     user_states[user_id] = {"action": "select_list_for_deletion"}
 
+
 @dp.message(Command("show_lists"))
-async def handle_show_lists(message: types.Message):
+async def show_lists(message: types.Message):
     user_id = message.from_user.id
     lists = await get_user_lists(user_id)
-
     if not lists:
-        await message.answer("📭 У вас нет списков")
+        await message.answer("🗑 Списки пусты!")
         return
 
+    builder = InlineKeyboardBuilder()
+
+    for index, item in enumerate(lists):
+        builder.button(text=item, callback_data=f"list_{index}")
+
+    builder.adjust(2)
+
+    builder.row(types.InlineKeyboardButton(
+        text="❌ Закрыть",
+        callback_data="close"
+    ))
+
     await message.answer(
-        "📋 Ваши списки:\n" + "\n".join([f"• {lst}" for lst in lists]),
-        reply_markup=create_keyboard(lists)
+        "📋 Ваши списки:",
+        reply_markup=builder.as_markup()
     )
-    user_states[user_id] = {"action": "show_list_selection"}
+    user_states[user_id] = {"action": "show_lists"}
+
+
+@dp.callback_query()
+async def handle_button_click(callback: types.CallbackQuery):
+    data = callback.data
+    user_id = callback.from_user.id
+    lists = await get_user_lists(user_id)
+    if data == "close":
+        await callback.message.delete()
+        await callback.answer("Клавиатура закрыта")
+    elif data.startswith("list_"):
+        index = int(data.split("_")[1])
+        selected_list = lists[index]
+        items = await get_list_items(user_id, lists[index])
+        if not items:
+            await callback.answer("🗑 Список пуст!")
+            return
+
+        await callback.message.edit_text(f"список: {selected_list}")
+        for d in items:
+            builder = InlineKeyboardBuilder()
+            builder.button(
+                text='❌- удалить',
+                callback_data=MyCallback(action="no", item_id=f"{selected_list}_{d}").pack()
+            )
+            builder.button(
+                text='✅- готово',
+                callback_data=MyCallback(action="yes", item_id=f"{selected_list}_{d}").pack()
+            )
+            builder.adjust(2)
+            await callback.message.answer(text=d, reply_markup=builder.as_markup())
+        await callback.message.delete()
+        await callback.answer("Клавиатура закрыта")
+
 
 @dp.message(F.text)
 async def handle_text(message: types.Message):
@@ -220,24 +261,28 @@ async def handle_text(message: types.Message):
                 reply_markup=types.ReplyKeyboardRemove()
             )
 
-        elif state["action"] == "show_list_selection":
-            items = await get_list_items(user_id, text)
-            response = (
-                    f"📋 Содержимое списка '{text}':\n" +
-                    "\n".join([f"• {item}" for item in items] if items else "Список пуст")
-            )
-            await message.answer(response, reply_markup=types.ReplyKeyboardRemove())
-
         elif state["action"] == "create_list":
             try:
                 cursor.execute(
+                    "SELECT id FROM lists WHERE user_id = ? AND list_name = ?",
+                    (user_id, text.strip())
+                )
+                existing = cursor.fetchone()
+
+                if existing:
+                    await message.answer("⚠️ У вас уже есть список с таким именем!")
+                    return False
+
+                # Проверка 2: Пытаемся вставить новую запись
+                cursor.execute(
                     "INSERT INTO lists (user_id, list_name, items) VALUES (?, ?, ?)",
-                    (user_id, text, "")
+                    (user_id, text.strip(), "")
                 )
                 conn.commit()
+
                 await message.answer(f"✅ Список '{text}' создан!")
-            except sqlite3.IntegrityError:
-                await message.answer(f"❌ Список '{text}' уже существует!")
+                return True
+
             except Exception as e:
                 logger.error(f"Create list error: {e}")
                 await message.answer("⚠️ Ошибка при создании списка")
@@ -278,3 +323,5 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
+
