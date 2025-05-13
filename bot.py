@@ -5,8 +5,7 @@ from random import randint
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.filters.callback_data import CallbackData
-from aiogram.types import BotCommand, ReplyKeyboardMarkup, InlineKeyboardButton, KeyboardButton, InlineKeyboardMarkup, \
-    update
+from aiogram.types import BotCommand
 from aiogram.utils.keyboard import ReplyKeyboardBuilder, InlineKeyboardBuilder
 
 logging.basicConfig(level=logging.INFO)
@@ -185,18 +184,18 @@ async def handle_button_click(callback: types.CallbackQuery):
             return
 
         await callback.message.edit_text(f"список: {selected_list}")
-        for d in items:
+        for i in range(len(items)):
             builder = InlineKeyboardBuilder()
             builder.button(
                 text='❌- удалить',
-                callback_data=MyCallback(action="no", item_id=f"{selected_list}_{d}").pack()
+                callback_data=MyCallback(action="no", item_id=f"{selected_list}_{items[i]}").pack()
             )
             builder.button(
                 text='✅- готово',
-                callback_data=MyCallback(action="yes", item_id=f"{selected_list}_{d}").pack()
+                callback_data=MyCallback(action="yes", item_id=f"{selected_list}_{items[i]}").pack()
             )
             builder.adjust(2)
-            await callback.message.answer(text=d, reply_markup=builder.as_markup())
+            await callback.message.answer(text=f"элемент {i + 1} : {items[i]}", reply_markup=builder.as_markup())
         await callback.message.delete()
         await callback.answer("Клавиатура закрыта")
 
@@ -264,31 +263,29 @@ async def handle_text(message: types.Message):
         elif state["action"] == "create_list":
             try:
                 cursor.execute(
-                    "SELECT id FROM lists WHERE user_id = ? AND list_name = ?",
+                    "SELECT 1 FROM lists WHERE user_id=? AND list_name=?",
                     (user_id, text.strip())
                 )
-                existing = cursor.fetchone()
 
-                if existing:
+                if cursor.fetchone():
                     await message.answer("⚠️ У вас уже есть список с таким именем!")
-                    return False
+                    return
 
-                # Проверка 2: Пытаемся вставить новую запись
                 cursor.execute(
                     "INSERT INTO lists (user_id, list_name, items) VALUES (?, ?, ?)",
                     (user_id, text.strip(), "")
                 )
                 conn.commit()
-
                 await message.answer(f"✅ Список '{text}' создан!")
-                return True
 
             except Exception as e:
                 logger.error(f"Create list error: {e}")
                 await message.answer("⚠️ Ошибка при создании списка")
+
         elif state["action"] == "add_to_list":
             user_states[user_id] = {"action": "add", "list_name": text}
             await message.answer('введите элемент')
+
         elif state["action"] == "add":
             list_name = state["list_name"]
             try:
@@ -323,5 +320,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
-
