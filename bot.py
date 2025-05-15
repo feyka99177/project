@@ -207,6 +207,11 @@ async def view_list_items(callback: types.CallbackQuery, callback_data: ListCall
 
     try:
         await callback.message.edit_text(f"📋 Список: {list_name}")
+        if not items:
+            await callback.message.answer("🗑 Список пуст!")
+            await callback.answer()
+            return
+
         for i, item in enumerate(items):
             builder = InlineKeyboardBuilder()
             builder.button(
@@ -243,6 +248,12 @@ async def delete_item_handler(callback: types.CallbackQuery, callback_data: List
     item = callback_data.item
 
     items = await get_list_items(user_id, list_name)
+
+    if not items:
+        await callback.message.answer("🗑 Список пуст!")
+        await callback.answer()
+        return
+
     if item in items:
         items.remove(item)
         await save_list_items(user_id, list_name, items)
@@ -319,6 +330,11 @@ async def select_items_for_deletion(callback: types.CallbackQuery, callback_data
     user_id = callback.from_user.id
     items = await get_list_items(user_id, callback_data.list_name)
 
+    if not items:
+        await callback.message.answer("🗑 Список пуст!")
+        await callback.answer()
+        return
+
     keyboard_buttons = [
         (item, ListCallback(action="confirm_item_delete", list_name=callback_data.list_name, item=item).pack())
         for item in items
@@ -365,6 +381,11 @@ async def confirm_delete_item(callback: types.CallbackQuery, callback_data: List
 async def execute_delete_item(callback: types.CallbackQuery, callback_data: ListCallback):
     user_id = callback.from_user.id
     items = await get_list_items(user_id, callback_data.list_name)
+
+    if not items:
+        await callback.message.answer("🗑 Список пуст!")
+        await callback.answer()
+        return
 
     if callback_data.item in items:
         items.remove(callback_data.item)
