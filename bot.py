@@ -4,8 +4,9 @@ import sqlite3
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.filters.callback_data import CallbackData
-from aiogram.types import BotCommand, InlineKeyboardMarkup, InlineKeyboardButton
-from aiogram.utils.keyboard import ReplyKeyboardBuilder, InlineKeyboardBuilder
+from aiogram.types import BotCommand
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+
 
 # Настройка логирования
 logging.basicConfig(
@@ -54,22 +55,6 @@ async def setup_bot_commands():
     await bot.set_my_commands(commands)
 
 
-def create_reply_keyboard(items: list[str], adjust: int = 2):
-    builder = ReplyKeyboardBuilder()
-    for item in items:
-        builder.add(types.KeyboardButton(text=item))
-    builder.adjust(adjust)
-    return builder.as_markup(resize_keyboard=True, one_time_keyboard=True)
-
-
-def create_inline_keyboard(items: list[tuple[str, str]], adjust: int = 2):
-    builder = InlineKeyboardBuilder()
-    for text, callback_data in items:
-        builder.button(text=text, callback_data=callback_data)
-    builder.adjust(adjust)
-    return builder.as_markup()
-
-
 async def get_user_lists(user_id: int) -> list[str]:
     cursor.execute("SELECT list_name FROM lists WHERE user_id=?", (user_id,))
     return [row[0] for row in cursor.fetchall()]
@@ -87,8 +72,7 @@ async def get_list_items(user_id: int, list_name: str) -> list[str]:
 async def save_list_items(user_id: int, list_name: str, items: list[str]):
     cursor.execute(
         "INSERT OR REPLACE INTO lists (user_id, list_name, items) VALUES (?, ?, ?)",
-        (user_id, list_name, ','.join(items))
-    )
+        (user_id, list_name, ','.join(items)))
     conn.commit()
 
 
@@ -129,11 +113,28 @@ async def cmd_add_to_list(message: types.Message):
         await message.answer("У вас нет списков. Сначала создайте список.")
         return
 
-    await message.answer(
-        "Выберите список:",
-        reply_markup=create_reply_keyboard(lists)
+    builder = InlineKeyboardBuilder()
+    for list_name in lists:
+        builder.button(
+            text=list_name,
+            callback_data=ListCallback(
+                action="add_to_selected_list",
+                list_name=list_name
+            ).pack()
+        )
+
+    builder.adjust(2)
+    builder.row(
+        types.InlineKeyboardButton(
+            text="❌ Закрыть",
+            callback_data=ListCallback(action="close").pack()
+        )
     )
-    user_states[user_id] = {"action": "selecting_list_for_add"}
+
+    await message.answer(
+        "Выберите список для добавления:",
+        reply_markup=builder.as_markup()
+    )
 
 
 @dp.message(Command("delete_list"))
@@ -151,9 +152,14 @@ async def cmd_delete_list(message: types.Message):
     ]
     keyboard_buttons.append(("❌ Закрыть", ListCallback(action="close").pack()))
 
+    builder = InlineKeyboardBuilder()
+    for text, data in keyboard_buttons:
+        builder.button(text=text, callback_data=data)
+    builder.adjust(2)
+
     await message.answer(
         "Выберите список для удаления:",
-        reply_markup=create_inline_keyboard(keyboard_buttons, 2)
+        reply_markup=builder.as_markup()
     )
 
 
@@ -172,9 +178,14 @@ async def cmd_delete_item(message: types.Message):
     ]
     keyboard_buttons.append(("❌ Закрыть", ListCallback(action="close").pack()))
 
+    builder = InlineKeyboardBuilder()
+    for text, data in keyboard_buttons:
+        builder.button(text=text, callback_data=data)
+    builder.adjust(2)
+
     await message.answer(
         "Выберите список:",
-        reply_markup=create_inline_keyboard(keyboard_buttons, 2)
+        reply_markup=builder.as_markup()
     )
 
 
@@ -193,9 +204,14 @@ async def cmd_show_lists(message: types.Message):
     ]
     keyboard_buttons.append(("❌ Закрыть", ListCallback(action="close").pack()))
 
+    builder = InlineKeyboardBuilder()
+    for text, data in keyboard_buttons:
+        builder.button(text=text, callback_data=data)
+    builder.adjust(2)
+
     await message.answer(
         "📋 Ваши списки:",
-        reply_markup=create_inline_keyboard(keyboard_buttons, 2)
+        reply_markup=builder.as_markup()
     )
 
 
@@ -206,39 +222,61 @@ async def view_list_items(callback: types.CallbackQuery, callback_data: ListCall
     items = await get_list_items(user_id, list_name)
 
     try:
-        await callback.message.edit_text(f"📋 Список: {list_name}")
+        add_button = InlineKeyboardBuilder()
+        add_button.button(
+            text='➕ Добавить элемент',
+            callback_data=ListCallback(action="add_to_selected_list", list_name=list_name).pack()
+        )
+
+        await callback.message.edit_text(
+            f"📋 Список: {list_name}",
+            reply_markup=add_button.as_markup()
+        )
+
         if not items:
             await callback.message.answer("🗑 Список пуст!")
-            await callback.answer()
             return
 
         for i, item in enumerate(items):
             builder = InlineKeyboardBuilder()
             builder.button(
                 text='❌ Удалить',
-                callback_data=ListCallback(
-                    action="delete",
-                    list_name=list_name,
-                    item=item
-                ).pack()
+                callback_data=ListCallback(action="delete", list_name=list_name, item=item).pack()
             )
             builder.button(
                 text='✅ Готово',
-                callback_data=ListCallback(
-                    action="done",
-                    list_name=list_name,
-                    item=item
-                ).pack()
+                callback_data=ListCallback(action="done", list_name=list_name, item=item).pack()
             )
             builder.adjust(2)
             await callback.message.answer(
                 f"Элемент {i + 1}: {item}",
                 reply_markup=builder.as_markup()
             )
+
     except Exception as e:
         logger.error(f"Ошибка отображения списка: {e}")
     finally:
         await callback.answer()
+
+
+@dp.callback_query(ListCallback.filter(F.action == "add_to_selected_list"))
+async def add_to_selected_list_handler(callback: types.CallbackQuery, callback_data: ListCallback):
+    user_id = callback.from_user.id
+    list_name = callback_data.list_name
+
+    user_states[user_id] = {
+        "action": "awaiting_item_for_list",
+        "selected_list": list_name
+    }
+
+    try:
+        await callback.message.answer(
+            f"Введите новый элемент для списка '{list_name}':",
+            reply_markup=types.ReplyKeyboardRemove()
+        )
+    except Exception as e:
+        logger.error(f"Ошибка добавления элемента: {e}")
+    await callback.answer()
 
 
 @dp.callback_query(ListCallback.filter(F.action == "delete"))
@@ -341,10 +379,15 @@ async def select_items_for_deletion(callback: types.CallbackQuery, callback_data
     ]
     keyboard_buttons.append(("❌ Закрыть", ListCallback(action="close").pack()))
 
+    builder = InlineKeyboardBuilder()
+    for text, data in keyboard_buttons:
+        builder.button(text=text, callback_data=data)
+    builder.adjust(2)
+
     try:
         await callback.message.edit_text(
-            f"Выберите элемент для удаления:",
-            reply_markup=create_inline_keyboard(keyboard_buttons, 2)
+            "Выберите элемент для удаления:",
+            reply_markup=builder.as_markup()
         )
     except Exception as e:
         logger.error(f"Ошибка выбора элемента: {e}")
@@ -434,16 +477,6 @@ async def handle_all_messages(message: types.Message):
         await save_list_items(user_id, text, [])
         await message.answer(f"✅ Список '{text}' создан!")
         del user_states[user_id]
-
-    elif state.get("action") == "selecting_list_for_add":
-        if text not in await get_user_lists(user_id):
-            return await message.answer("⚠️ Выберите список из кнопок!")
-
-        user_states[user_id] = {
-            "action": "awaiting_item_for_list",
-            "selected_list": text
-        }
-        await message.answer(f"Введите элемент для списка '{text}':", reply_markup=types.ReplyKeyboardRemove())
 
     elif state.get("action") == "awaiting_item_for_list":
         list_name = state["selected_list"]
