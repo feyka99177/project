@@ -1,3 +1,5 @@
+from typing import Optional, List
+from typing import Optional
 import asyncio
 import logging
 import sqlite3
@@ -39,8 +41,8 @@ user_states = {}
 
 class ListCallback(CallbackData, prefix="list"):
     action: str
-    list_name: str | None = None
-    item: str | None = None
+    list_name: Optional[str] = None  # Заменяем str | None на Optional[str]
+    item: Optional[str] = None
 
 
 async def setup_bot_commands():
@@ -55,12 +57,12 @@ async def setup_bot_commands():
     await bot.set_my_commands(commands)
 
 
-async def get_user_lists(user_id: int) -> list[str]:
+async def get_user_lists(user_id: int) -> List[str]:  # Заменяем list[str] на List[str]
     cursor.execute("SELECT list_name FROM lists WHERE user_id=?", (user_id,))
     return [row[0] for row in cursor.fetchall()]
 
 
-async def get_list_items(user_id: int, list_name: str) -> list[str]:
+async def get_list_items(user_id: int, list_name: str) -> List[str]:  # И здесь тоже
     cursor.execute(
         "SELECT items FROM lists WHERE user_id=? AND list_name=?",
         (user_id, list_name)
@@ -69,7 +71,7 @@ async def get_list_items(user_id: int, list_name: str) -> list[str]:
     return result[0].split(',') if result and result[0] else []
 
 
-async def save_list_items(user_id: int, list_name: str, items: list[str]):
+async def save_list_items(user_id: int, list_name: str, items: List[str]):  # Заменяем list[str] -> List[str]
     cursor.execute(
         "INSERT OR REPLACE INTO lists (user_id, list_name, items) VALUES (?, ?, ?)",
         (user_id, list_name, ','.join(items)))
