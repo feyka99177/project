@@ -1,14 +1,7 @@
-import os
-from dotenv import load_dotenv
+import logging
 
+API_TOKEN = '7812084701:AAGjhN1eG3s-VDtyiosPZemWgre9lGwrGME'
+DB_PATH = "lists.db"
 
-load_dotenv()
-
-
-class Config:
-    API_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-    DB_NAME = "todo_lists.db"
-    ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x]
-    ITEMS_LIMIT = 50
-    LOGS_FILE = "bot.log"
-    DEFAULT_LIST_NAME = "Мой список"
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+logger = logging.getLogger(__name__)
